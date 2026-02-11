@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# Virtual env
+.venv/
+venv/
+env/
+.env
+
+# MLflow / experiment artifacts
+mlruns/
+mlartifacts/
+*.db
+outputs/
+*.pkl
+*.joblib
+*.log
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store

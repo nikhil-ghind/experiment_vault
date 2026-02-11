@@ -1,0 +1,14 @@
+experiment_name: experiment_vault
+db_path: experiments.db
+mlflow_tracking_uri: null
+artifact_path: model
+model_flavor: sklearn
+alert_channels: [log]
+
+trigger:
+  metric_threshold: 0.10
+  metric_name: val_loss
+  lower_is_better: true
+  drift_psi_threshold: 0.2
+  min_samples_since_last: 1000
+  always_retrain_after_days: 30
