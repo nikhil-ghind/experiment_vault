@@ -2,6 +2,48 @@
 
 MLflow-backed experiment registry with automated retraining triggers, PSI/KS drift detection, alert routing, and a FastAPI model-serving endpoint.
 
+## Architecture
+
+```mermaid
+flowchart TB
+    NEW["new production data<br/>reference_df vs current_df"] --> DD["detect_feature_drift<br/>PSI over 10 bins + two-sample KS per column"]
+    DD --> DR["drift_results<br/>per column: psi, ks_stat, p_value, drifted"]
+    DR --> AL["AlertManager.check_and_alert<br/>channels from config: log, email via SMTP"]
+    DR --> TRG
+
+    subgraph trg["RetrainingTrigger.should_retrain — first match wins"]
+        TRG{"any condition?"}
+        T1["days_since_last >= always_retrain_after_days"]
+        T2["samples seen >= min_samples_since_last"]
+        T3["any column flagged drifted"]
+        T4["metric degraded past metric_threshold<br/>relative to the last recorded metric"]
+    end
+    TRG --> T1
+    TRG --> T2
+    TRG --> T3
+    TRG --> T4
+
+    TRG -->|"no condition met"| SKIP["no retraining, reason logged"]
+    TRG -->|"triggered"| RUN["RetrainingPipeline._run_retrain"]
+
+    RUN --> UF["user function registered via @pipeline.register_train<br/>returns (model, metrics, params)"]
+    UF --> MT["MLflowTracker<br/>log_params, log_metrics, log_model<br/>sklearn / pytorch / pyfunc flavors"]
+    MT --> MLF[("MLflow tracking server + artifacts")]
+    UF --> ES["ExperimentStore.save<br/>SQLite row with params, metrics, run_id"]
+    ES --> SQL[("experiments.db<br/>list() and best() queries")]
+    RUN --> REC["trigger.record_metric(val_loss)<br/>becomes the next comparison baseline"]
+
+    REG["MLflowTracker.register<br/>register_model + transition_model_version_stage<br/>available but not called by _run_retrain"] -.-> MLF
+
+    subgraph srv["Serving — src/serving/model_server.py"]
+        API["POST /predict {model_name, stage, data}"] --> CACHE["_load_model with an in-process cache<br/>keyed by (name, stage)"]
+        CACHE --> LOAD["mlflow.pyfunc.load_model('models:/name/stage')"]
+        LOAD --> PRED["predictions"]
+        DEL["DELETE /cache clears the cache"] --> CACHE
+    end
+    MLF --> LOAD
+```
+
 ## Overview
 
 - **ExperimentStore** — lightweight SQLite-backed store indexed by MLflow run IDs; `best()` returns the champion run by any metric
@@ -43,21 +85,6 @@ def train():
 
 # Check for drift / trigger retraining
 pipeline.check(reference_df=ref, current_df=cur, current_metric=0.18, days_since_last=35)
-```
-
-## Architecture
-
-```
-new data arrives
-    → detect_feature_drift() PSI + KS per column
-    → AlertManager → log / email on drift
-    → RetrainingTrigger.should_retrain()
-        → metric degradation OR drift OR N samples OR schedule
-    → RetrainingPipeline._run_retrain()
-        → user's train() fn
-        → MLflowTracker.log_* + register to Production
-        → ExperimentStore.save()
-    → FastAPI /predict → mlflow.pyfunc.load_model("models:/champion/Production")
 ```
 
 ## Evaluation
